@@ -1,6 +1,6 @@
 # IndexNow Key Builder & URL Submission Tool
 
-A standalone responsive page for creating an IndexNow key file, preparing a URL-change notification, and sending it to a selected participating IndexNow endpoint. The complete interface is in `index.html`; no build step, backend, account login, analytics, or external JavaScript dependency is required.
+A responsive IndexNow key builder and URL notifier. The interface is in `index.html`; the small same-origin Node service in `server.mjs` forwards confirmed notifications to a selected participating endpoint with `curl`. No build step, account login, analytics, or external JavaScript dependency is required.
 
 ## What it does
 
@@ -10,16 +10,16 @@ A standalone responsive page for creating an IndexNow key file, preparing a URL-
 - Accepts one URL or a newline-separated batch of up to 10,000 URLs.
 - Removes fragments, preserves query strings, removes duplicates, and checks that all submitted URLs use the same HTTP(S) host.
 - Validates IndexNow keys against the documented 8–128 character rule and permitted letters, digits, and hyphens.
-- Uses the documented GET request for one URL and JSON POST for multiple URLs, including `host`, `key`, `keyLocation`, and `urlList`.
+- Uses the documented GET request for one URL and JSON POST for multiple URLs, including `host`, `key`, `keyLocation`, and `urlList`; the same-origin service uses `curl` so browser CORS restrictions do not block reading the response.
 - Checks that the key file is on the submitted host and that every submitted path falls within the key file's authorized directory scope.
 - Requires explicit site-owner confirmation, displays the request before sending, and creates a copyable `curl` fallback.
-- Shows documented HTTP response meanings and reports CORS/network/timeout cases as unconfirmed—not as success.
+- Shows documented HTTP response meanings and reports service/network/timeout cases as unconfirmed—not as success.
 
 ## Key setup and hosting
 
 Click **Generate & download** with your domain to create `{key}.txt` containing exactly the generated key and download the file. Upload that file to the domain's web root with your hosting provider, then open its public URL and confirm the contents match the key. This static page prepares the file but does not sign in to or upload it to your hosting provider. If your site already uses an IndexNow key, paste that existing key instead of replacing it.
 
-The page initially prefills the homepage as a working example, along with the key file URL, request endpoint, and copyable `curl` command. Replace the homepage with the recently added, updated, or deleted URL(s), verify the preview, and only send after uploading the key file and confirming site ownership. The key remains in page memory only; it is not written to local storage.
+The page initially prefills the homepage as a working example, along with the key file URL, request endpoint, and copyable `curl` command. The generated root key-file URL and homepage follow the entered domain while they remain untouched; custom values are preserved. Replace the homepage with recently added, updated, or deleted URL(s), verify the preview, and only send after uploading the key file and confirming site ownership. The key remains in page memory only; it is not written to local storage.
 
 ## Search-engine endpoint selection
 
@@ -29,14 +29,21 @@ Selecting an endpoint chooses where the first notification is sent; it does **no
 
 ## Run or host
 
-Open `index.html` directly or host the repository root on any static-site provider. HTTPS hosting is recommended for clipboard access. Browser CORS policy may prevent the page from reading an endpoint response; in that case, the tool explains that receipt is unknown and provides a `curl` command for checking the actual HTTP status. The command contains the public IndexNow key and URL list, so review it before running or sharing it.
+Run the same-origin service with Node.js 18 or newer and `curl` installed:
+
+```sh
+npm start
+```
+
+Then open `http://localhost:4173`. Set `PORT` to choose another port. The service serves the page and accepts only its local submission route; it validates the payload and maps the selected engine to a fixed official endpoint. Static hosting or opening `index.html` directly still allows key generation and request preparation, but sending requires the Node service. A separate copyable `curl` command is also available if you choose to submit manually; it contains the public IndexNow key and URL list, so review it before running or sharing it.
 
 ## Verification
 
-The repository includes `tests/protocol.test.mjs`, which exercises the inline page script with a minimal DOM and intercepted `fetch`; it sends no real network requests. Run it with:
+The tests exercise the inline page script with a minimal DOM and intercepted `fetch`, and test the Node service with an injected submitter; they send no real IndexNow requests. Run all tests and syntax-check the service with:
 
 ```sh
-node --test tests/protocol.test.mjs
+npm test
+node --check server.mjs
 ```
 
 Official sources: [IndexNow documentation](https://www.indexnow.org/documentation), [FAQ](https://www.indexnow.org/faq), [participating-engine registry](https://www.indexnow.org/searchengines.json), and [search-engine protocol reference](https://www.indexnow.org/searchengines).
