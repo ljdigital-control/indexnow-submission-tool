@@ -51,7 +51,7 @@
           <label class="checkline"><input id="ownershipConfirmed" type="checkbox"><span><strong>I control this site.</strong> I uploaded the key file as a UTF-8 text file containing exactly this key, and I’m only notifying URLs I’m authorized to submit.</span></label>
           <div class="actions"><button class="button primary" type="submit" id="prepareButton">Validate &amp; prepare</button><span class="help">No request is sent by preparing.</span></div>
           <div class="endpoint"><span>Selected endpoint</span><code class="engine-endpoint" id="endpointUrl"></code></div>
-          <div class="privacy">Your key stays in this page's memory. It is sent only to the selected endpoint after you click Send, or included in a command you explicitly copy. This page does not save it or send analytics.</div>
+          <div class="privacy">Your key stays in this page's memory. After you click Send, the same-origin Node service forwards the request to the selected endpoint using curl. It is not saved or sent to analytics. The separate curl command is available if you choose to copy it.</div>
         </form>
 
         <div class="panel" aria-labelledby="request-title">
@@ -76,13 +76,13 @@
       <div class="steps">
         <article class="step"><b>1. Publish the key file</b><p>Use a UTF-8 text file named <code>{key}.txt</code>, containing only the key. Put it at the root when possible. If it lives in a subfolder, only URLs within that folder's path scope can use it.</p></article>
         <article class="step"><b>2. Validate host &amp; scope</b><p>Every URL in one batch must use the same host. The tool checks that the key file matches that host and that submitted URL paths are within the file's allowed scope.</p></article>
-        <article class="step"><b>3. Send &amp; read the receipt</b><p>A single URL uses GET; multiple URLs use JSON POST with a maximum of 10,000 URLs. If browser CORS prevents reading the response, use the generated curl command to inspect the HTTP status.</p></article>
+        <article class="step"><b>3. Send &amp; read the receipt</b><p>A single URL uses GET; multiple URLs use JSON POST with a maximum of 10,000 URLs. The same-origin Node service uses curl to read the endpoint response without browser CORS restrictions; a separate curl command is also available to copy.</p></article>
       </div>
       <div class="reference"><span>IndexNow shares accepted URL-change notices with participating search engines.</span><a href="https://www.indexnow.org/documentation" target="_blank" rel="noopener noreferrer">Read official IndexNow documentation ↗</a></div>
       <div class="notice"><strong>Response codes</strong><b>200</b> received; <b>202</b> accepted, key validation pending; <b>400</b> malformed request; <b>403</b> invalid key or key file; <b>422</b> host or key-schema mismatch; <b>429</b> rate limited. Some endpoints may return other codes. A successful response is not an indexing guarantee.</div>
     </section>
   </main>
-  <footer class="footer wrap"><p>IndexNow URL Change Notifier · client-side, no account connection</p><p><a href="https://www.indexnow.org/searchengines" target="_blank" rel="noopener noreferrer">Official participating-engine list</a></p></footer>
+  <footer class="footer wrap"><p>IndexNow URL Change Notifier · no account connection</p><p><a href="https://www.indexnow.org/searchengines" target="_blank" rel="noopener noreferrer">Official participating-engine list</a></p></footer>
   <div class="sr-only" id="liveStatus" aria-live="polite"></div>
   <script id="app">
     (() => {
@@ -212,13 +212,15 @@
             '--data-urlencode ' + shellQuote('url=' + data.urls[0].href) + ' ' +
             '--data-urlencode ' + shellQuote('key=' + data.key) + ' ' +
             '--data-urlencode ' + shellQuote('keyLocation=' + data.keyLocation) + ' ' + shellQuote(endpoint);
-          return { method: 'GET', url: requestUrl, body: null, curl, host: data.host, count: 1, engine: data.engine };
+          return { method: 'GET', url: requestUrl, body: null, curl, host: data.host, count: 1, engine: data.engine,
+            submission: { engine: data.engine.id, key: data.key, keyLocation: data.keyLocation, urls: data.urls.map(url => url.href) } };
         }
         const body = { host: data.host, key: data.key, keyLocation: data.keyLocation, urlList: data.urls.map(url => url.href) };
         const json = JSON.stringify(body, null, 2);
         const curl = 'curl -i --request POST --header ' + shellQuote('Content-Type: application/json; charset=utf-8') +
           ' --data-raw ' + shellQuote(JSON.stringify(body)) + ' ' + shellQuote(endpoint);
-        return { method: 'POST', url: endpoint, body, json, curl, host: data.host, count: data.urls.length, engine: data.engine };
+        return { method: 'POST', url: endpoint, body, json, curl, host: data.host, count: data.urls.length, engine: data.engine,
+          submission: { engine: data.engine.id, key: data.key, keyLocation: data.keyLocation, urls: data.urls.map(url => url.href) } };
       }
       function statusMeaning(status) {
         const meanings = {
@@ -294,6 +296,37 @@
         clearPrepared(true);
       }));
       updateEndpointDisplay();
+      let autofilledKeyLocation = '';
+      let autofilledHomepage = '';
+      function updateGeneratedAutofill() {
+        if (!generatedKey || !siteField.value.trim()) return false;
+        try {
+          const site = parseHttpUrl(siteField.value, 'Website URL');
+          const siteRoot = new URL(site.protocol + '//' + site.host + '/');
+          const nextKeyLocation = new URL(generatedKey + '.txt', siteRoot).href;
+          let changed = false;
+          if (!keyLocationField.value || keyLocationField.value === autofilledKeyLocation) {
+            keyLocationField.value = nextKeyLocation;
+            autofilledKeyLocation = nextKeyLocation;
+            changed = true;
+          }
+          if (!urlsField.value || urlsField.value === autofilledHomepage) {
+            urlsField.value = siteRoot.href;
+            autofilledHomepage = siteRoot.href;
+            changed = true;
+          }
+          if (changed) {
+            keyFileStatus.textContent = 'Downloaded ' + generatedKey + '.txt. Upload it to ' + keyLocationField.value + ', then replace the prefilled homepage with recently changed URLs.';
+          }
+          return changed;
+        } catch (_) {
+          // Keep the last valid autofill while the domain field is incomplete.
+          return false;
+        }
+      }
+      siteField.addEventListener('input', () => {
+        if (updateGeneratedAutofill()) clearPrepared(true);
+      });
       document.getElementById('generateKey').addEventListener('click', () => {
         try {
           const site = parseHttpUrl(siteField.value, 'Website URL');
@@ -302,6 +335,8 @@
           keyField.value = generatedKey;
           keyLocationField.value = new URL(generatedKey + '.txt', siteRoot).href;
           urlsField.value = siteRoot.href;
+          autofilledKeyLocation = keyLocationField.value;
+          autofilledHomepage = urlsField.value;
           ownershipField.checked = false;
           downloadKeyButton.disabled = false;
           clearPrepared(false);
@@ -330,24 +365,22 @@
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         try {
-          const response = await fetch(request.url, {
-            method: request.method,
-            mode: 'cors',
-            credentials: 'omit',
-            referrerPolicy: 'no-referrer',
-            headers: request.method === 'POST' ? { 'Content-Type': 'application/json; charset=utf-8' } : undefined,
-            body: request.method === 'POST' ? JSON.stringify(request.body) : undefined,
+          const response = await fetch('/api/submit', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+            body: JSON.stringify(request.submission),
             signal: controller.signal
           });
-          const rawBody = await response.text();
-          const responseText = rawBody.slice(0, 4000);
-          const [title, meaning] = statusMeaning(response.status);
-          showResult(response.ok ? 'success' : 'error', title + ' (' + response.status + ')', meaning, responseText || '(empty response body)');
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'The submission service could not confirm a response.');
+          const [title, meaning] = statusMeaning(payload.status);
+          showResult(payload.ok ? 'success' : 'error', title + ' (' + payload.status + ')', meaning, payload.body || '(empty response body)');
         } catch (error) {
           const aborted = error && error.name === 'AbortError';
           showResult('error', aborted ? 'No response before timeout' : 'The browser could not confirm a response', aborted
             ? 'The request timed out after 15 seconds. Its receipt is unknown; do not assume it was submitted.'
-            : 'This may be a browser CORS restriction or a network error. The request may have been blocked before sending, or the endpoint may have received it without exposing a response. Receipt is unconfirmed. Use the curl command above to check the HTTP status.', '');
+            : 'The same-origin submission service could not confirm a response. Receipt is unconfirmed; use the curl command above to check the endpoint directly.', '');
         } finally {
           clearTimeout(timeout);
           sendButton.textContent = 'Send notification';

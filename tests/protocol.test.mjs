@@ -105,7 +105,7 @@ async function authorize(h) {
 
 test('builds and downloads a key file, then prefills the site URL and request preview', async () => {
   let calls = [];
-  const h = createHarness(async (...args) => { calls.push(args); return { ok: true, status: 200, text: async () => '' }; });
+  const h = createHarness(async (...args) => { calls.push(args); return { ok: true, json: async () => ({ ok: true, status: 200, body: '' }) }; });
   h.get('siteUrl').value = 'example.com/blog/';
   await h.get('generateKey').fire('click');
   const key = h.get('apiKey').value;
@@ -127,6 +127,27 @@ test('builds and downloads a key file, then prefills the site URL and request pr
   assert.equal(calls.length, 0, 'generating and preparing never sends a notification');
 });
 
+test('preserves the entered domain and refreshes only generated key-file and homepage autofills', async () => {
+  const h = createHarness();
+  h.get('siteUrl').value = 'https://www.example.com/blog/';
+  await h.get('generateKey').fire('click');
+  const key = h.get('apiKey').value;
+  assert.equal(h.get('keyLocation').value, `https://www.example.com/${key}.txt`);
+  assert.equal(h.get('urlList').value, 'https://www.example.com/');
+
+  h.get('siteUrl').value = 'https://shop.example.net/catalog';
+  await h.get('siteUrl').fire('input');
+  assert.equal(h.get('keyLocation').value, `https://shop.example.net/${key}.txt`);
+  assert.equal(h.get('urlList').value, 'https://shop.example.net/');
+
+  h.get('keyLocation').value = 'https://shop.example.net/custom/key.txt';
+  h.get('urlList').value = 'https://shop.example.net/changed-page';
+  h.get('siteUrl').value = 'https://www.example.org/';
+  await h.get('siteUrl').fire('input');
+  assert.equal(h.get('keyLocation').value, 'https://shop.example.net/custom/key.txt');
+  assert.equal(h.get('urlList').value, 'https://shop.example.net/changed-page');
+});
+
 test('rejects a local host before creating a key file or preparing a request', async () => {
   const h = createHarness();
   h.get('siteUrl').value = 'http://localhost:3000';
@@ -141,7 +162,7 @@ test('single URL prepares RFC3986 GET and sends only after explicit confirmation
   let calls = [];
   const h = createHarness(async (url, options) => {
     calls.push({ url, options });
-    return { ok: true, status: 200, text: async () => 'accepted' };
+    return { ok: true, json: async () => ({ ok: true, status: 200, body: 'accepted' }) };
   });
   fillSingle(h, { urls: 'https://example.com/new page?q=a&b=c#fragment' });
   await prepare(h);
@@ -153,11 +174,14 @@ test('single URL prepares RFC3986 GET and sends only after explicit confirmation
   assert.equal(h.get('sendRequest').disabled, false);
   await h.get('sendRequest').fire('click');
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].options.method, 'GET');
-  assert.equal(new URL(calls[0].url).searchParams.get('url'), 'https://example.com/new%20page?q=a&b=c');
-  assert.equal(calls[0].url.startsWith('https://www.bing.com/indexnow?'), true);
-  assert.equal(new URL(calls[0].url).searchParams.get('key'), 'abcde123');
-  assert.equal(calls[0].options.credentials, 'omit');
+  assert.equal(calls[0].url, '/api/submit');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.credentials, 'same-origin');
+  const submission = JSON.parse(calls[0].options.body);
+  assert.equal(submission.engine, 'bing');
+  assert.equal(submission.urls[0], 'https://example.com/new%20page?q=a&b=c');
+  assert.equal(submission.key, 'abcde123');
+  assert.equal(submission.keyLocation, 'https://example.com/abcde123.txt');
   assert.equal(h.get('resultTitle').textContent, 'Request received (200)');
   assert.match(h.get('resultMessage').textContent, /does not mean.*indexed/i);
   assert.equal(h.get('sendRequest').disabled, true, 'a second send requires preparing again');
@@ -186,7 +210,7 @@ test('batch builds the documented JSON POST and enforces a subdirectory key scop
   let calls = [];
   const h = createHarness(async (url, options) => {
     calls.push({ url, options });
-    return { ok: true, status: 202, text: async () => 'pending validation' };
+    return { ok: true, json: async () => ({ ok: true, status: 202, body: 'pending validation' }) };
   });
   await selectEngine(h, 'yandex');
   fillSingle(h, {
@@ -200,15 +224,14 @@ test('batch builds the documented JSON POST and enforces a subdirectory key scop
   await authorize(h);
   await h.get('sendRequest').fire('click');
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'https://yandex.com/indexnow');
+  assert.equal(calls[0].url, '/api/submit');
   assert.equal(calls[0].options.method, 'POST');
-  assert.match(calls[0].options.body, /https:\/\/example\.com\/catalog\/a/);
   assert.equal(calls[0].options.headers['Content-Type'], 'application/json; charset=utf-8');
   const body = JSON.parse(calls[0].options.body);
-  assert.equal(body.host, 'example.com');
+  assert.equal(body.engine, 'yandex');
   assert.equal(body.key, 'abcde123');
   assert.equal(body.keyLocation, 'https://example.com/catalog/key.txt');
-  assert.deepEqual(Array.from(body.urlList), ['https://example.com/catalog/a', 'http://example.com/catalog/b?x=1']);
+  assert.deepEqual(Array.from(body.urls), ['https://example.com/catalog/a', 'http://example.com/catalog/b?x=1']);
   assert.match(h.get('resultTitle').textContent, /202/);
   assert.match(h.get('resultMessage').textContent, /validation is pending/i);
 });
@@ -252,7 +275,7 @@ test('deduplicates URLs and invalidates a prepared request if input changes', as
   assert.equal(h.get('endpointUrl').textContent, 'https://searchadvisor.naver.com/indexnow');
 });
 
-test('reports browser CORS/network failures as unconfirmed rather than success', async () => {
+test('reports same-origin service/network failures as unconfirmed rather than success', async () => {
   const h = createHarness(async () => { throw new TypeError('Failed to fetch'); });
   fillSingle(h);
   await prepare(h);
