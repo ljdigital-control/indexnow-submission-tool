@@ -37,6 +37,10 @@ npm start
 
 Then open `http://localhost:4173`. Set `PORT` to choose another port. The service serves the page and accepts only its local submission route; it validates the payload and maps the selected engine to a fixed official endpoint. Static hosting or opening `index.html` directly still allows key generation and request preparation, but sending requires the Node service. A separate copyable `curl` command is also available if you choose to submit manually; it contains the public IndexNow key and URL list, so review it before running or sharing it.
 
+### Vercel
+
+The repository also deploys to Vercel with no build step: `index.html` is served statically and `api/submit.mjs` provides the same `/api/submit` route as a serverless function. It reuses `validateSubmission` from `server.mjs` and forwards with server-side `fetch` (HTTPS only, no redirects followed, 15-second timeout) instead of the `curl` binary, which Vercel functions do not guarantee. Connecting the repository to a Vercel project deploys every merge to `main` automatically.
+
 ## Verification
 
 The tests exercise the inline page script with a minimal DOM and intercepted `fetch`, and test the Node service with an injected submitter; they send no real IndexNow requests. Run all tests and syntax-check the service with:
